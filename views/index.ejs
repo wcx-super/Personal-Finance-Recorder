@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finance Tracker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Transaction Recorder</h1>
+
+  <%# 插值标签会自动做 HTML 转义，所以不再需要手写 escapeHtml %>
+  <div class="summary">
+    <span class="balance num"><%= fmt(stats.balance) %></span>
+    <span class="balance-label">Current Balance</span>
+    <div class="totals num">
+      <span class="income">Income <b><%= fmt(stats.total_income) %></b></span>
+      <span class="expense">Expense <b><%= fmt(stats.total_expense) %></b></span>
+    </div>
+  </div>
+
+  <%# 每个 input 都要有 name，服务端靠 name 在 req.body 里取值 %>
+  <form class="add-form" method="POST" action="/records">
+    <div>
+      <label for="type">Income or Expense</label>
+      <select id="type" name="type">
+        <option value="expense">Expense</option>
+        <option value="income">Income</option>
+      </select>
+    </div>
+    <div>
+      <label for="amount">Amount</label>
+      <input type="number" id="amount" name="amount" step="0.01" min="0.01" required placeholder="0.00">
+    </div>
+    <div>
+      <label for="category">Category</label>
+      <input type="text" id="category" name="category" required placeholder="Dining" list="cats">
+      <datalist id="cats">
+        <% catOptions.forEach((cat) => { %>
+          <option value="<%= cat %>"></option>
+        <% }); %>
+      </datalist>
+    </div>
+    <div>
+      <label for="date">Date</label>
+      <%# 默认值以前是 JS 在浏览器里塞的，现在服务端渲染时就填好了 %>
+      <input type="date" id="date" name="date" required value="<%= today %>">
+    </div>
+    <div class="full">
+      <label for="note">Note</label>
+      <input type="text" id="note" name="note" placeholder="Optional">
+    </div>
+    <div class="full">
+      <button type="submit">Add Transaction</button>
+    </div>
+  </form>
+
+  <h2>All Transactions</h2>
+
+  <%# form 不能嵌套，所以筛选（GET）和清空（POST）是并排的两个 form %>
+  <div class="filters">
+    <form class="filter-form" method="GET" action="/">
+      <select name="type" onchange="this.form.submit()">
+        <option value="">All Transactions</option>
+        <option value="expense" <%= filters.type === "expense" ? "selected" : "" %>>Expenses Only</option>
+        <option value="income"  <%= filters.type === "income"  ? "selected" : "" %>>Income Only</option>
+      </select>
+      <select name="category" onchange="this.form.submit()">
+        <option value="">All Categories</option>
+        <% stats.all_categories.forEach((cat) => { %>
+          <option value="<%= cat %>" <%= filters.category === cat ? "selected" : "" %>><%= cat %></option>
+        <% }); %>
+      </select>
+      <%# 浏览器禁用 JS 时上面的 onchange 不触发，留一个按钮兜底 %>
+      <noscript><button type="submit">Filter</button></noscript>
+    </form>
+
+    <form class="clear-form" method="POST" action="/records/delete-all"
+          onsubmit="return confirm('Delete all <%= stats.count %> transactions? This action cannot be undone.')">
+      <button type="submit" class="danger" <%= stats.count === 0 ? "disabled" : "" %>>Clear all</button>
+    </form>
+  </div>
+
+  <% if (records.length === 0) { %>
+    <div class="empty">No transactions to display.</div>
+  <% } else { %>
+    <% records.forEach((r) => { %>
+      <div class="row">
+        <span class="date num"><%= r.date.slice(5) %></span>
+        <span><%= r.category %><% if (r.note) { %> <span class="note"><%= r.note %></span><% } %></span>
+        <span class="money num <%= r.type %>"><%= r.type === "income" ? "+" : "−" %><%= fmt(r.amount) %></span>
+        <%# HTML 表单只认 GET 和 POST，没有 DELETE，所以动作写进路径里 %>
+        <form class="del-form" method="POST" action="/records/<%= r.id %>/delete"
+              onsubmit="return confirm('Delete this transaction?')">
+          <button type="submit" class="del" title="Delete">&times;</button>
+        </form>
+      </div>
+    <% }); %>
+  <% } %>
+
+  <h2>Expense Categories</h2>
+
+  <% const cats = Object.entries(stats.expense_by_category).sort((a, b) => b[1] - a[1]); %>
+  <% if (cats.length === 0) { %>
+    <div class="empty">No expense records.</div>
+  <% } else { %>
+    <% const max = cats[0][1]; %>
+    <% cats.forEach(([cat, total]) => { %>
+      <div class="cat">
+        <span><%= cat %></span>
+        <%# 条形宽度是算出来的，直接插值进 style %>
+        <span class="bar"><span style="width: <%= (total / max * 100).toFixed(1) %>%"></span></span>
+        <span class="num" style="text-align: right"><%= fmt(total) %></span>
+      </div>
+    <% }); %>
+  <% } %>
+
+</div>
+</body>
+</html>
