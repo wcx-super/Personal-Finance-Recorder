@@ -52,6 +52,9 @@ Then open <http://localhost:8000>.
 
 The `records` table and its indexes are created on startup if they do not exist, so
 there is no separate migration step.
+<img width="1404" height="1275" alt="屏幕截图 2026-09-23 090658" src="https://github.com/user-attachments/assets/a81f0843-d68a-4e93-b8ec-113e25504c94" />
+<img width="1441" height="654" alt="屏幕截图 2026-09-23 090708" src="https://github.com/user-attachments/assets/fee0c356-7540-49db-803a-f6a8e9dbbce0" />
+
 
 ## Routes
 
