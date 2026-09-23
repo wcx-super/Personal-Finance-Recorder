@@ -1,4 +1,5 @@
-# Ledger
+# Personal-Finance-Recorder
+
 
 A small personal expense tracker: record income and expenses, filter them, and see
 where the money went. Server-rendered with Express 5, EJS and PostgreSQL — no
