@@ -45,7 +45,7 @@ PORT=8000
 Run it:
 
 ```bash
-npm server.js
+npm run dev
 ```
 
 Then open <http://localhost:8000>.
