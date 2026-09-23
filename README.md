@@ -27,12 +27,6 @@ cd accounting_notebook
 npm install
 ```
 
-Create the database:
-
-```bash
-createdb ledger
-```
-
 Copy the example environment file and fill in your PostgreSQL password:
 
 ```bash
@@ -51,8 +45,7 @@ PORT=8000
 Run it:
 
 ```bash
-npm run dev     # with --watch, restarts on file changes
-npm start       # plain
+npm server.js
 ```
 
 Then open <http://localhost:8000>.
