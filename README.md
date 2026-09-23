@@ -22,7 +22,7 @@ client-side framework, no build step.
 ## Setup
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/wcx-super/Personal-Finance-Recorder
 cd accounting_notebook
 npm install
 ```
