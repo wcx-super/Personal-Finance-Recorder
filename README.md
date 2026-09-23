@@ -166,6 +166,4 @@ a single-user ledger it is not worth it.
 - Category matching is case-sensitive: `Dining` and `dining` are two categories
 - No pagination; the ledger renders every row
 
-## License
 
-MIT
