@@ -221,6 +221,16 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT) || 8000;
 
 await initDb();
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Ledger running at http://localhost:${PORT}`);
 });
+
+function shutdown(signal) {
+  console.log(`${signal} received, shutting down`);
+  server.close(async () => {
+    await db.end();
+  });
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
