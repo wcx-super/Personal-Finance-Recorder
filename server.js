@@ -198,10 +198,10 @@ function fmt(value) {
   });
 }
 
+const TIME_ZONE = process.env.APP_TIME_ZONE || "America/Los_Angeles";
+
 function today() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());
 }
 
 app.use((err, req, res, next) => {
