@@ -13,9 +13,11 @@ const db = new pg.Pool(
         port: Number(process.env.PGPORT) || 5432,
       },
 );
+
 db.on("error", (err) => {
   console.error("Unexpected error on idle database client", err);
 });
+
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1700, (value) => parseFloat(value));
 
@@ -128,6 +130,8 @@ async function getStats() {
 }
 
 const app = express();
+
+app.set("trust proxy", 1);
 
 app.use(express.urlencoded({ extended: true }));
 
