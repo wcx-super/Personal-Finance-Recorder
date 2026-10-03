@@ -2,13 +2,17 @@ import path from "node:path";
 import express from "express";
 import pg from "pg";
 
-const db = new pg.Pool({
-  user: process.env.PGUSER || "postgres",
-  host: process.env.PGHOST || "localhost",
-  database: process.env.PGDATABASE || "ledger",
-  password: process.env.PGPASSWORD,
-  port: Number(process.env.PGPORT) || 5432,
-});
+const db = new pg.Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL }
+    : {
+        user: process.env.PGUSER || "postgres",
+        host: process.env.PGHOST || "localhost",
+        database: process.env.PGDATABASE || "ledger",
+        password: process.env.PGPASSWORD,
+        port: Number(process.env.PGPORT) || 5432,
+      },
+);
 
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1700, (value) => parseFloat(value));
