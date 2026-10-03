@@ -16,7 +16,7 @@ client-side framework, no build step.
 
 ## Requirements
 
-- Node.js 20.6 or newer (uses the built-in `--env-file` flag, so there is no `dotenv` dependency)
+- Node.js 24 (pinned in `package.json` `engines`; uses the built-in `--env-file-if-exists` flag, so there is no `dotenv` dependency)
 - PostgreSQL 9.4 or newer (uses aggregate `FILTER`)
 
 ## Setup
