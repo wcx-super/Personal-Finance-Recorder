@@ -1,6 +1,8 @@
 import path from "node:path";
 import express from "express";
 import pg from "pg";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 
 const db = new pg.Pool(
   process.env.DATABASE_URL
@@ -17,6 +19,10 @@ const db = new pg.Pool(
 db.on("error", (err) => {
   console.error("Unexpected error on idle database client", err);
 });
+
+if (!process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is not set");
+}
 
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1700, (value) => parseFloat(value));
@@ -152,6 +158,23 @@ app.set("view engine", "ejs");
 app.set("views", path.resolve("views"));
 
 app.use("/static", express.static("static"));
+const PgSession = connectPgSimple(session);
+const sessionStore = new PgSession({ pool: db, createTableIfMissing: true });
+
+app.use(
+  session({
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    },
+  }),
+);
 
 const DEFAULT_CATS = ["Dining", "Transportation", "Shopping", "Housing", "Entertainment", "Salary"];
 
@@ -241,6 +264,7 @@ const server = app.listen(PORT, () => {
 function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
   server.close(async () => {
+    sessionStore.close();
     await db.end();
   });
 }
