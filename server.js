@@ -23,6 +23,14 @@ pg.types.setTypeParser(1700, (value) => parseFloat(value));
 
 async function initDb() {
   await db.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      email         TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await db.query(`
     CREATE TABLE IF NOT EXISTS records (
       id       SERIAL PRIMARY KEY,
       type     TEXT NOT NULL,
@@ -32,8 +40,13 @@ async function initDb() {
       date     DATE NOT NULL
     )
   `);
+  await db.query(`
+    ALTER TABLE records
+      ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  `);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_records_category ON records (category)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_records_date ON records (date)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_records_user_date ON records (user_id, date)`);
 }
 
 const VALID_TYPES = ["income", "expense"];
