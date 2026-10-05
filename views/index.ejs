@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Finance Tracker</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -48,7 +49,7 @@
     </div>
     <div>
       <label for="date">Date</label>
-      <%# 默认值以前是 JS 在浏览器里塞的，现在服务端渲染时就填好了 %>
+      <%# 服务端先按 APP_TIME_ZONE 填一个默认值；app.js 再改成浏览器所在时区的今天 %>
       <input type="date" id="date" name="date" required value="<%= today %>">
     </div>
     <div class="full">
@@ -65,23 +66,23 @@
   <%# form 不能嵌套，所以筛选（GET）和清空（POST）是并排的两个 form %>
   <div class="filters">
     <form class="filter-form" method="GET" action="/">
-      <select name="type" onchange="this.form.submit()">
+      <select name="type" data-autosubmit>
         <option value="">All Transactions</option>
         <option value="expense" <%= filters.type === "expense" ? "selected" : "" %>>Expenses Only</option>
         <option value="income"  <%= filters.type === "income"  ? "selected" : "" %>>Income Only</option>
       </select>
-      <select name="category" onchange="this.form.submit()">
+      <select name="category" data-autosubmit>
         <option value="">All Categories</option>
         <% stats.all_categories.forEach((cat) => { %>
           <option value="<%= cat %>" <%= filters.category === cat ? "selected" : "" %>><%= cat %></option>
         <% }); %>
       </select>
-      <%# 浏览器禁用 JS 时上面的 onchange 不触发，留一个按钮兜底 %>
+      <%# 浏览器禁用 JS 时，app.js 的自动提交不起作用，留一个按钮兜底 %>
       <noscript><button type="submit">Filter</button></noscript>
     </form>
 
     <form class="clear-form" method="POST" action="/records/delete-all"
-          onsubmit="return confirm('Delete all <%= stats.count %> transactions? This action cannot be undone.')">
+          data-confirm="Delete all <%= stats.count %> transactions? This action cannot be undone.">
       <button type="submit" class="danger" <%= stats.count === 0 ? "disabled" : "" %>>Clear all</button>
     </form>
   </div>
@@ -96,7 +97,7 @@
         <span class="money num <%= r.type %>"><%= r.type === "income" ? "+" : "−" %><%= fmt(r.amount) %></span>
         <%# HTML 表单只认 GET 和 POST，没有 DELETE，所以动作写进路径里 %>
         <form class="del-form" method="POST" action="/records/<%= r.id %>/delete"
-              onsubmit="return confirm('Delete this transaction?')">
+              data-confirm="Delete this transaction?">
           <button type="submit" class="del" title="Delete">&times;</button>
         </form>
       </div>
