@@ -3,6 +3,7 @@ import express from "express";
 import pg from "pg";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import bcrypt from "bcryptjs";
 
 const db = new pg.Pool(
   process.env.DATABASE_URL
@@ -94,6 +95,39 @@ function parseId(raw) {
   return id;
 }
 
+function parseCredentials(body = {}) {
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) {
+    throw new HttpError(400, "a valid email is required");
+  }
+  if (password.length < 8) {
+    throw new HttpError(400, "password must be at least 8 characters");
+  }
+  if (Buffer.byteLength(password) > 72) {
+    throw new HttpError(400, "password is too long");
+  }
+
+  return { email, password };
+}
+
+function startSession(req, userId) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) return reject(err);
+      req.session.userId = userId;
+      resolve();
+    });
+  });
+}
+
+function endSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.destroy((err) => (err ? reject(err) : resolve()));
+  });
+}
+
 async function listRecords({ category, type }) {
   const where = [];
   const params = [];
@@ -177,6 +211,50 @@ app.use(
 );
 
 const DEFAULT_CATS = ["Dining", "Transportation", "Shopping", "Housing", "Entertainment", "Salary"];
+
+app.get("/register", (req, res) => {
+  res.render("register.ejs");
+});
+
+app.post("/register", async (req, res) => {
+  const { email, password } = parseCredentials(req.body);
+  const passwordHash = await bcrypt.hash(password, 12);
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1, $2)
+     ON CONFLICT (email) DO NOTHING
+     RETURNING id`,
+    [email, passwordHash],
+  );
+  if (!rows[0]) {
+    throw new HttpError(409, "this email is already registered");
+  }
+  await startSession(req, rows[0].id);
+  res.redirect("/");
+});
+
+app.get("/login", (req, res) => {
+  res.render("login.ejs");
+});
+
+app.post("/login", async (req, res) => {
+  const { email, password } = parseCredentials(req.body);
+  const { rows } = await db.query(
+    `SELECT id, password_hash FROM users WHERE email = $1`,
+    [email],
+  );
+  const user = rows[0];
+  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    throw new HttpError(401, "incorrect email or password");
+  }
+  await startSession(req, user.id);
+  res.redirect("/");
+});
+
+app.post("/logout", async (req, res) => {
+  await endSession(req);
+  res.clearCookie("connect.sid");
+  res.redirect("/login");
+});
 
 app.get("/", async (req, res) => {
   const { category, type } = req.query;
