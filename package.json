@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch server.js",
-    "start": "node --env-file-if-exists=.env server.js"
+    "start": "node --env-file-if-exists=.env server.js",
+    "test": "node --env-file-if-exists=.env.test --test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -18,5 +19,8 @@
   },
   "engines": {
     "node": "24.x"
+  },
+  "devDependencies": {
+    "supertest": "^7.3.1"
   }
 }
