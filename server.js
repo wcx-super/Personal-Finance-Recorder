@@ -69,6 +69,10 @@ class HttpError extends Error {
   }
 }
 
+const MAX_AMOUNT = 9999999999.99;
+const MAX_CATEGORY_LENGTH = 50;
+const MAX_NOTE_LENGTH = 200;
+
 function parseRecord(body = {}) {
   const { type, category, date } = body;
   const note = body.note ?? "";
@@ -80,14 +84,31 @@ function parseRecord(body = {}) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new HttpError(400, "amount must be greater than 0");
   }
+  if (amount > MAX_AMOUNT) {
+    throw new HttpError(400, "amount is too large");
+  }
   if (typeof category !== "string" || category.trim() === "") {
     throw new HttpError(400, "category is required");
   }
-  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new HttpError(400, "date must be in YYYY-MM-DD format");
+  if (category.trim().length > MAX_CATEGORY_LENGTH) {
+    throw new HttpError(400, `category must be at most ${MAX_CATEGORY_LENGTH} characters`);
+  }
+  if (String(note).trim().length > MAX_NOTE_LENGTH) {
+    throw new HttpError(400, `note must be at most ${MAX_NOTE_LENGTH} characters`);
+  }
+  if (typeof date !== "string" || !isValidDate(date)) {
+    throw new HttpError(400, "date must be a real date in YYYY-MM-DD format");
   }
 
   return { type, amount, category: category.trim(), note: String(note).trim(), date };
+}
+
+function isValidDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
 function parseId(raw) {
@@ -101,7 +122,9 @@ function parseId(raw) {
 function parseCredentials(body = {}) {
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
-
+  if (email.length > 254) {
+    throw new HttpError(400, "email is too long");
+  }
   if (!/^[^\s@]+@[^\s@]+$/.test(email)) {
     throw new HttpError(400, "a valid email is required");
   }
@@ -206,7 +229,7 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: false, limit: "10kb" }));
 
 app.set("view engine", "ejs");
 app.set("views", path.resolve("views"));
@@ -356,11 +379,18 @@ function today() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());
 }
 
+
 app.use((err, req, res, next) => {
   if (err instanceof HttpError) {
     return res.status(err.status).render("error.ejs", {
       status: err.status,
       detail: err.detail,
+    });
+  }
+  if (err.expose && err.status < 500) {
+    return res.status(err.status).render("error.ejs", {
+      status: err.status,
+      detail: err.message,
     });
   }
   console.error(err);
