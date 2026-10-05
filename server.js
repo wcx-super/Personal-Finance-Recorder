@@ -5,6 +5,7 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 
 const db = new pg.Pool(
   process.env.DATABASE_URL
@@ -202,6 +203,8 @@ async function getStats(userId) {
 const app = express();
 
 app.set("trust proxy", 1);
+
+app.use(helmet());
 
 app.use(express.urlencoded({ extended: true }));
 
