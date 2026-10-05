@@ -4,6 +4,7 @@ import pg from "pg";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
+import { rateLimit } from "express-rate-limit";
 
 const db = new pg.Pool(
   process.env.DATABASE_URL
@@ -228,11 +229,28 @@ app.use(
 
 const DEFAULT_CATS = ["Dining", "Transportation", "Shopping", "Housing", "Entertainment", "Salary"];
 
+function tooManyRequests(req, res, next) {
+  next(new HttpError(429, "too many attempts, please try again later"));
+}
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  skipSuccessfulRequests: true,
+  handler: tooManyRequests,
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  handler: tooManyRequests,
+});
+
 app.get("/register", (req, res) => {
   res.render("register.ejs");
 });
 
-app.post("/register", async (req, res) => {
+app.post("/register", registerLimiter,async (req, res) => {
   const { email, password } = parseCredentials(req.body);
   const passwordHash = await bcrypt.hash(password, 12);
   const { rows } = await db.query(
@@ -252,7 +270,7 @@ app.get("/login", (req, res) => {
   res.render("login.ejs");
 });
 
-app.post("/login", async (req, res) => {
+app.post("/login", loginLimiter,async (req, res) => {
   const { email, password } = parseCredentials(req.body);
   const { rows } = await db.query(
     `SELECT id, password_hash FROM users WHERE email = $1`,
