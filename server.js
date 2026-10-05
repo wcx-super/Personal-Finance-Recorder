@@ -128,9 +128,23 @@ function endSession(req) {
   });
 }
 
-async function listRecords({ category, type }) {
-  const where = [];
-  const params = [];
+async function requireLogin(req, res, next) {
+  const userId = req.session.userId;
+  if (!userId) {
+    return res.redirect("/login");
+  }
+  const { rows } = await db.query(`SELECT id, email FROM users WHERE id = $1`, [userId]);
+  if (!rows[0]) {
+    await endSession(req);
+    return res.redirect("/login");
+  }
+  req.user = rows[0];
+  next();
+}
+
+async function listRecords({ userId, category, type }) {
+  const where = ["user_id = $1"];
+  const params = [userId];
   if (category) {
     params.push(category);
     where.push(`category = $${params.length}`);
@@ -142,14 +156,14 @@ async function listRecords({ category, type }) {
 
   const { rows } = await db.query(
     `SELECT * FROM records
-     ${where.length ? "WHERE " + where.join(" AND ") : ""}
+     WHERE ${where.join(" AND ")}
      ORDER BY date DESC, id DESC`,
     params,
   );
   return rows;
 }
 
-async function getStats() {
+async function getStats(userId) {
   const [totals, byCategory, categories] = await Promise.all([
     db.query(`
       SELECT
@@ -157,14 +171,15 @@ async function getStats() {
         COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0) AS expense,
         COUNT(*) AS count
       FROM records
-    `),
+      WHERE user_id = $1
+    `, [userId]),
     db.query(`
       SELECT category, SUM(amount) AS total
       FROM records
-      WHERE type = 'expense'
+      WHERE user_id = $1 AND type = 'expense'
       GROUP BY category
-    `),
-    db.query(`SELECT DISTINCT category FROM records ORDER BY category`),
+    `, [userId]),
+    db.query(`SELECT DISTINCT category FROM records WHERE user_id = $1 ORDER BY category`, [userId]),
   ]);
 
   const income = Number(totals.rows[0].income);
@@ -256,17 +271,18 @@ app.post("/logout", async (req, res) => {
   res.redirect("/login");
 });
 
-app.get("/", async (req, res) => {
+app.get("/", requireLogin, async (req, res) => {
   const { category, type } = req.query;
 
   const [records, stats] = await Promise.all([
-    listRecords({ category, type }),
-    getStats(),
+    listRecords({ userId: req.user.id, category, type }),
+    getStats(req.user.id),
   ]);
 
   res.render("index.ejs", {
     records,
     stats,
+    user: req.user,
     filters: { category, type },
     catOptions: [...new Set([...DEFAULT_CATS, ...stats.all_categories])].sort(),
     today: today(),
@@ -274,21 +290,21 @@ app.get("/", async (req, res) => {
   });
 });
 
-app.post("/records", async (req, res) => {
+app.post("/records", requireLogin, async (req, res) => {
   const r = parseRecord(req.body);
   await db.query(
-    `INSERT INTO records (type, amount, category, note, date)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [r.type, r.amount, r.category, r.note, r.date],
+    `INSERT INTO records (type, amount, category, note, date, user_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [r.type, r.amount, r.category, r.note, r.date, req.user.id],
   );
   res.redirect("/");
 });
 
-app.post("/records/:id/delete", async (req, res) => {
+app.post("/records/:id/delete", requireLogin, async (req, res) => {
   const id = parseId(req.params.id);
   const { rows } = await db.query(
-    `DELETE FROM records WHERE id = $1 RETURNING id`,
-    [id],
+    `DELETE FROM records WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [id, req.user.id],
   );
   if (!rows[0]) {
     throw new HttpError(404, "record not found");
@@ -296,8 +312,8 @@ app.post("/records/:id/delete", async (req, res) => {
   res.redirect("/");
 });
 
-app.post("/records/delete-all", async (req, res) => {
-  await db.query(`DELETE FROM records`);
+app.post("/records/delete-all", requireLogin, async (req, res) => {
+  await db.query(`DELETE FROM records WHERE user_id = $1`, [req.user.id]);
   res.redirect("/");
 });
 

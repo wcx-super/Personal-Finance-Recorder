@@ -10,7 +10,8 @@
 <div class="wrap">
 
   <h1>Transaction Recorder</h1>
-  <form method="POST" action="/logout">
+   <form method="POST" action="/logout">
+    <span><%= user.email %></span>
     <button type="submit" class="danger">Log out</button>
   </form>
   <%# 插值标签会自动做 HTML 转义，所以不再需要手写 escapeHtml %>
