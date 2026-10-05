@@ -51,6 +51,7 @@ async function initDb() {
     ALTER TABLE records
       ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
   `);
+  await db.query(`ALTER TABLE records ALTER COLUMN user_id SET NOT NULL`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_records_category ON records (category)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_records_date ON records (date)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_records_user_date ON records (user_id, date)`);
