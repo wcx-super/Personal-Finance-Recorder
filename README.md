@@ -1,8 +1,9 @@
 # Personal-Finance-Recorder
 
 A small multi-user expense tracker: sign up, record income and expenses, filter them,
-and see where the money went. Server-rendered with Express 5, EJS and PostgreSQL — no
-client-side framework, no build step.
+and see where the money went. The back end is a JSON API on Express 5 and PostgreSQL;
+the front end is a few static pages in plain JavaScript that call it — no client-side
+framework, no build step.
 
 Live: <https://personal-finance-recorder.onrender.com>
 
@@ -62,12 +63,52 @@ PostgreSQL is needed. Data lives in the `db-data` volume, so it survives restart
 
 `compose.yaml` sets `NODE_ENV=development` on purpose: the image defaults to
 `production`, which marks the session cookie `Secure`, and a `Secure` cookie is never
-sent over plain `http://localhost` — sign-in would silently bounce back to the login
-page.
+sent over plain `http://localhost` — sign-in would succeed and then every request
+would come back 401.
+
+## API
+
+Every endpoint takes and returns JSON. Authentication is a session cookie set by
+`/api/register` or `/api/login`; endpoints marked "yes" return `401` without it.
+
+| Method   | Path                   | Login | Success | Purpose                                          |
+| -------- | ---------------------- | ----- | ------- | ------------------------------------------------ |
+| `POST`   | `/api/register`        |       | `201`   | Create an account and log in (rate limited)      |
+| `POST`   | `/api/login`           |       | `200`   | Log in (rate limited)                            |
+| `POST`   | `/api/logout`          |       | `204`   | Destroy the session                              |
+| `GET`    | `/api/me`              | yes   | `200`   | The logged-in user                               |
+| `GET`    | `/api/records`         | yes   | `200`   | Your records, newest first; `?type=` `?category=` |
+| `GET`    | `/api/stats`           | yes   | `200`   | Balance, totals, per-category expenses           |
+| `POST`   | `/api/records`         | yes   | `201`   | Create a record; returns it                      |
+| `DELETE` | `/api/records/:id`     | yes   | `204`   | Delete one of your records                       |
+| `DELETE` | `/api/records`         | yes   | `204`   | Clear your ledger                                |
+
+Errors always have the same shape, with the status code carrying the meaning:
+`400` bad input, `401` not logged in or wrong password, `404` no such record (or not
+yours), `409` email already registered, `413` body over 10 KB, `429` too many attempts.
+
+```http
+POST /api/records
+Content-Type: application/json
+
+{ "type": "expense", "amount": "12.50", "category": "Dining", "note": "lunch", "date": "2026-10-01" }
+```
+
+```http
+HTTP/1.1 201 Created
+
+{ "id": 42, "type": "expense", "amount": 12.5, "category": "Dining", "note": "lunch", "date": "2026-10-01", "user_id": 7 }
+```
+
+```http
+HTTP/1.1 400 Bad Request
+
+{ "error": "date must be a real date in YYYY-MM-DD format" }
+```
 
 ## Tests
 
-The tests drive the real app over HTTP with `supertest` against a separate database.
+The tests drive the real API over HTTP with `supertest` against a separate database.
 Create a database whose name ends in `_test` (for example `ledger_test`), then a
 `.env.test` alongside `.env`:
 
@@ -85,13 +126,14 @@ npm test
 ```
 
 The suite wipes its database before running, so it refuses to start unless the
-database name ends in `_test`. It covers what is easiest to get wrong in a multi-user
-app: logged-out visitors are redirected, one user's records, categories and totals
-never appear on another user's page, nobody can delete or clear someone else's
-records, wrong passwords are rejected, and impossible dates are a 400, not a 500.
+database name ends in `_test`. Its 8 tests cover what is easiest to get wrong in a
+multi-user app: requests without a session get 401, one user's records, categories
+and totals never appear in another user's responses, nobody can delete or clear
+someone else's records, wrong passwords are rejected, impossible dates are a 400 and
+not a 500, and logging out really ends the session.
 
-GitHub Actions runs the same suite on every push to `main`, against a throwaway
-PostgreSQL service container (`.github/workflows/test.yml`).
+GitHub Actions runs the same suite on every push to `main` and on every pull request,
+against a throwaway PostgreSQL service container (`.github/workflows/test.yml`).
 
 ## Configuration
 
@@ -101,7 +143,6 @@ PostgreSQL service container (`.github/workflows/test.yml`).
 | `PGUSER` `PGHOST` `PGDATABASE` `PGPASSWORD` `PGPORT` | Used when `DATABASE_URL` is not set |
 | `SESSION_SECRET` | Signs the session cookie. Required — the app refuses to start without it |
 | `NODE_ENV` | `production` marks the session cookie `Secure` |
-| `APP_TIME_ZONE` | Fallback time zone for the form's default date (default `America/Los_Angeles`) |
 | `PORT` | Port to listen on (default `8000`) |
 
 ## Deployment
@@ -110,39 +151,23 @@ Deployed on Render as a Docker web service, with the database on Neon:
 
 - Render builds the `Dockerfile` and runs `node server.js` as the unprivileged `node`
   user; `.dockerignore` keeps `.env` files and tests out of the image
-- `DATABASE_URL`, `SESSION_SECRET`, `NODE_ENV=production` and `APP_TIME_ZONE` are set
-  in the Render dashboard, never in the repository
-- Auto-deploy waits for the GitHub Actions checks to pass
-
-## Routes
-
-| Method | Path                   | Login | Purpose                                        |
-| ------ | ---------------------- | ----- | ---------------------------------------------- |
-| `GET`  | `/register`            |       | Sign-up form                                   |
-| `POST` | `/register`            |       | Create an account and log in (rate limited)    |
-| `GET`  | `/login`               |       | Login form                                     |
-| `POST` | `/login`               |       | Log in (rate limited)                          |
-| `POST` | `/logout`              |       | Destroy the session, then redirect to `/login` |
-| `GET`  | `/`                    | yes   | Render the ledger; reads `?type=` `?category=` |
-| `POST` | `/records`             | yes   | Create an entry, then redirect to `/`          |
-| `POST` | `/records/:id/delete`  | yes   | Delete one of your entries                     |
-| `POST` | `/records/delete-all`  | yes   | Clear your ledger                              |
-
-Every write redirects instead of rendering, so a refresh never resubmits a form.
+- `DATABASE_URL`, `SESSION_SECRET` and `NODE_ENV=production` are set in the Render
+  dashboard, never in the repository
+- Pushes to `main` are tested by GitHub Actions and deployed by Render
 
 ## Project structure
 
 ```
 server.js            Startup: create tables, listen, shut down gracefully
-app.js               The Express app: routes, queries, validation, sessions, errors
-views/
-  index.ejs          The ledger page
-  login.ejs          Login form
-  register.ejs       Sign-up form
-  error.ejs          Error page
-static/
+app.js               The Express app: API routes, queries, validation, sessions, errors
+static/              Served as-is by express.static
+  index.html         The ledger page (markup only)
+  login.html         Login form
+  register.html      Sign-up form
+  api.js             fetch wrapper: JSON in and out, errors become ApiError
+  app.js             Ledger page: loads data, renders it, handles add/delete/filter
+  auth.js            Login and sign-up form handling
   style.css
-  app.js             Browser-side: auto-submit filters, confirm deletes, local date
 test/
   isolation.test.js  Per-user isolation and validation tests
 Dockerfile           Production image
@@ -152,60 +177,69 @@ compose.yaml         Local app + PostgreSQL
 
 ## Design notes
 
-### Server-side rendering over a JSON API
+### A JSON API with a static front end
 
-An earlier version was a JSON API with a client-side page that assembled the DOM
-from `fetch` calls. Rewriting it as server-rendered EJS removed the hand-written HTML
-escaping and the empty-state flash on first paint. The page now arrives with its data
-already in it; the only browser script left is a few lines of progressive enhancement
-in `static/app.js`.
+An earlier version rendered every page on the server with EJS. It now serves only
+JSON, and the pages are static HTML that fetch their data. The back end got smaller
+— no templates, no redirects, no formatting — and every operation is reachable with
+a single HTTP call, which is what makes the API testable on its own and usable by
+something other than this page. Adding a record or deleting one now updates the page
+in place instead of reloading it.
 
-The cost is a full round trip per action. For a personal ledger that is a good trade;
-for something with frequent partial updates it would not be.
+The cost is that the browser does the rendering, so the escaping EJS used to do for
+free is now the front end's job. Everything a user typed is put on the page with
+`textContent`, `new Option()` or `createElement`; nothing goes through `innerHTML`.
+The page also needs JavaScript to show anything at all.
 
 ### Every query is scoped to the current user
 
-`requireLogin` runs before every ledger route. It loads the user named in the session
-and puts it on `req.user`; past that point, every query carries
-`user_id = req.user.id`. The id always comes from the session, never from the form.
+`requireLogin` runs before every ledger endpoint. It loads the user named in the
+session and puts it on `req.user`; past that point, every query carries
+`user_id = req.user.id`. The id always comes from the session, never from the
+request body.
 
 Deletes are the place this matters most. `DELETE ... WHERE id = $1 AND user_id = $2
-RETURNING id` means a guessed or edited record id from someone else's ledger simply
-matches nothing and becomes a 404. The tests check the totals and category lists too,
-not only the record list, because a missing filter in one of the three `getStats`
-queries would leak other users' numbers while every page still looked fine.
+RETURNING id` means a guessed record id from someone else's ledger simply matches
+nothing and becomes a 404. The tests check the totals and category lists too, not
+only the record list, because a missing filter in one of the three `getStats` queries
+would leak other users' numbers while the record list still looked fine.
 
 ### Sessions and passwords
 
 Passwords are hashed with bcrypt (cost 12) and never stored or logged in plain text.
-Unknown emails and wrong passwords get the same message, so the login form cannot be
-used to discover who has an account. Passwords over 72 bytes are rejected because
+Unknown emails and wrong passwords get the same message, so the login endpoint cannot
+be used to discover who has an account. Passwords over 72 bytes are rejected because
 bcrypt silently ignores everything past that point.
 
 Sessions live in PostgreSQL through `connect-pg-simple` rather than in memory, so a
 restart or a free-tier sleep does not log everyone out, and logging out deletes the
 server-side row so a copied cookie stops working. The session id is regenerated at
-login to prevent session fixation. The cookie is `HttpOnly` and `SameSite=Lax`, which
-keeps other sites from submitting the ledger's forms with your session.
+login to prevent session fixation. The cookie is `HttpOnly`, so page scripts cannot
+read it.
+
+A session cookie on an API invites cross-site request forgery, and two things close
+that door. The cookie is `SameSite=Lax`, so the browser leaves it off cross-site
+`POST` and `DELETE` requests. And the API only parses `application/json` bodies,
+which another site's HTML form cannot send; a script on another origin could, but
+only after a CORS preflight that this API never approves.
 
 ### Defense in depth in the browser
 
 `helmet` sets a Content Security Policy that only runs scripts from the site's own
-files, and refuses inline event handlers. EJS already escapes everything it
-interpolates; the CSP is there for the day a template slips. That is why
-`static/app.js` attaches behavior through `data-autosubmit` and `data-confirm`
-attributes instead of `onchange`/`onsubmit`.
+files and refuses inline event handlers, so even markup that slipped past
+`textContent` could not execute. That is why every page loads its behavior from a
+`.js` file and attaches listeners with `addEventListener`.
 
 Login and sign-up are rate limited per IP. Only failed logins count, so signing in
 and out repeatedly never locks you out. Counters are in memory and reset on restart.
 
 ### One validation boundary
 
-Form fields arrive as strings, and anything that can send an HTTP request can send
-anything at all — a crafted `curl` call bypasses `required`, `min` and `maxlength`
-without effort. `parseRecord`, `parseId` and `parseCredentials` run as the first
-statement of each handler and return typed, trimmed values. Past that line, the rest
-of the handler can treat its input as well-formed.
+Request bodies come from whoever sent them — a crafted `curl` call bypasses
+`required`, `min` and `maxlength` without effort. `parseRecord`, `parseId` and
+`parseCredentials` run as the first statement of each handler and return typed,
+trimmed values. Past that line, the rest of the handler can treat its input as
+well-formed.
 
 The checks are not decorative. PostgreSQL's `NUMERIC` accepts `NaN` as a legitimate
 value, so an unvalidated `Number("abc")` inserts cleanly and then poisons every
@@ -219,10 +253,14 @@ Request bodies are capped at 10 KB.
 ### Typed errors, one handler
 
 Validation failures `throw new HttpError(status, detail)`. A single Express error
-middleware catches them and renders the error page with that status; client errors
-raised by Express itself, such as an oversized body, keep their status too. Anything
-else is logged and becomes a 500. Express 5 forwards rejections from async handlers
-automatically, so no route needs its own `try`/`catch`.
+middleware turns them into `{ "error": detail }` with that status; client errors
+raised by Express itself, such as malformed JSON or an oversized body, keep their
+status too. Anything else is logged and becomes a 500. Express 5 forwards rejections
+from async handlers automatically, so no route needs its own `try`/`catch`.
+
+The front end mirrors this: `static/api.js` turns any non-2xx response into an
+`ApiError` carrying the status, so a page can send a `401` to the login screen and
+show anything else next to the form.
 
 The point of the distinction is honesty: a 400 tells the user to fix their input, a
 500 admits the server is broken. Letting a bad amount surface as a 500 would blame
@@ -248,7 +286,7 @@ Pushing the value first means `params.length` is already the 1-based index that
 PostgreSQL's placeholder numbering expects. The SQL *structure* is assembled in
 JavaScript; the *values* are never part of that string.
 
-### Dates and time zones
+### Dates and numbers at the driver boundary
 
 Two PostgreSQL types need custom parsers. `DATE` would otherwise become a JS `Date`
 interpreted in the server's timezone, which can shift the day; it is kept as a
@@ -258,8 +296,7 @@ arithmetic into string concatenation if ignored, so it is parsed to a number.
 used.
 
 The form's default date is "today" for the person filling it in, not for the server,
-which runs in UTC. The server renders a fallback computed in `APP_TIME_ZONE`, and
-`static/app.js` replaces it with the date on the user's own device.
+which runs in UTC — so the browser fills it in from the user's own clock.
 
 ### Schema changes on startup
 
@@ -293,10 +330,14 @@ store and the pool. The container runs `node server.js` directly rather than thr
 
 ## Known limitations
 
+- The pages need JavaScript; with it disabled they stay empty
+- Authentication is cookie-based, which suits this same-origin front end; a mobile
+  app or third-party client would want token-based auth instead
+- No endpoint to edit a record; fixing a mistake means deleting and re-adding it
 - Rate limiting is per IP and in memory: many IPs guessing one account are not
   slowed down, and a restart resets the counters
 - Categories are derived from existing rows, so deleting the last entry in a
   category removes it from the dropdowns
 - Category matching is case-sensitive: `Dining` and `dining` are two categories
 - No password reset or email verification
-- No pagination; the ledger renders every row
+- No pagination; `/api/records` returns every row
