@@ -20,7 +20,6 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgres://postgres:postgres@db:5432/ledger
       SESSION_SECRET: local-docker-secret
-      APP_TIME_ZONE: America/Los_Angeles
     depends_on:
       db:
         condition: service_healthy
