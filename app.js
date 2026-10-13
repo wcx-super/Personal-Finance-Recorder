@@ -5,6 +5,11 @@ import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+import dns from "node:dns";          
+import net from "node:net";          
+
+dns.setDefaultResultOrder("ipv4first");    
+net.setDefaultAutoSelectFamily(false);
 
 const db = new pg.Pool(
   process.env.DATABASE_URL
