@@ -1,4 +1,3 @@
-import path from "node:path";
 import express from "express";
 import pg from "pg";
 import session from "express-session";
@@ -157,12 +156,12 @@ function endSession(req) {
 async function requireLogin(req, res, next) {
   const userId = req.session.userId;
   if (!userId) {
-    return res.redirect("/login");
+    throw new HttpError(401, "login required");
   }
   const { rows } = await db.query(`SELECT id, email FROM users WHERE id = $1`, [userId]);
   if (!rows[0]) {
     await endSession(req);
-    return res.redirect("/login");
+    throw new HttpError(401, "login required");
   }
   req.user = rows[0];
   next();
@@ -229,12 +228,11 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 
-app.use(express.urlencoded({ extended: false, limit: "10kb" }));
 
-app.set("view engine", "ejs");
-app.set("views", path.resolve("views"));
+app.use(express.json({ limit: "10kb" }));
 
-app.use("/static", express.static("static"));
+
+app.use(express.static("static"));
 const PgSession = connectPgSimple(session);
 const sessionStore = new PgSession({ pool: db, createTableIfMissing: true });
 
@@ -253,7 +251,6 @@ app.use(
   }),
 );
 
-const DEFAULT_CATS = ["Dining", "Transportation", "Shopping", "Housing", "Entertainment", "Salary"];
 
 function tooManyRequests(req, res, next) {
   next(new HttpError(429, "too many attempts, please try again later"));
@@ -272,34 +269,26 @@ const registerLimiter = rateLimit({
   handler: tooManyRequests,
 });
 
-app.get("/register", (req, res) => {
-  res.render("register.ejs");
-});
-
-app.post("/register", registerLimiter,async (req, res) => {
+app.post("/api/register", registerLimiter, async (req, res) => {
   const { email, password } = parseCredentials(req.body);
   const passwordHash = await bcrypt.hash(password, 12);
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash) VALUES ($1, $2)
      ON CONFLICT (email) DO NOTHING
-     RETURNING id`,
+     RETURNING id, email`,
     [email, passwordHash],
   );
   if (!rows[0]) {
     throw new HttpError(409, "this email is already registered");
   }
   await startSession(req, rows[0].id);
-  res.redirect("/");
+  res.status(201).json(rows[0]);
 });
 
-app.get("/login", (req, res) => {
-  res.render("login.ejs");
-});
-
-app.post("/login", loginLimiter,async (req, res) => {
+app.post("/api/login", loginLimiter, async (req, res) => {
   const { email, password } = parseCredentials(req.body);
   const { rows } = await db.query(
-    `SELECT id, password_hash FROM users WHERE email = $1`,
+    `SELECT id, email, password_hash FROM users WHERE email = $1`,
     [email],
   );
   const user = rows[0];
@@ -307,45 +296,40 @@ app.post("/login", loginLimiter,async (req, res) => {
     throw new HttpError(401, "incorrect email or password");
   }
   await startSession(req, user.id);
-  res.redirect("/");
+  res.json({ id: user.id, email: user.email });
 });
 
-app.post("/logout", async (req, res) => {
+app.post("/api/logout", async (req, res) => {
   await endSession(req);
   res.clearCookie("connect.sid");
-  res.redirect("/login");
+  res.sendStatus(204);
 });
 
-app.get("/", requireLogin, async (req, res) => {
+app.get("/api/me", requireLogin, (req, res) => {
+  res.json(req.user);
+});
+
+app.get("/api/records", requireLogin, async (req, res) => {
   const { category, type } = req.query;
-
-  const [records, stats] = await Promise.all([
-    listRecords({ userId: req.user.id, category, type }),
-    getStats(req.user.id),
-  ]);
-
-  res.render("index.ejs", {
-    records,
-    stats,
-    user: req.user,
-    filters: { category, type },
-    catOptions: [...new Set([...DEFAULT_CATS, ...stats.all_categories])].sort(),
-    today: today(),
-    fmt,
-  });
+  res.json(await listRecords({ userId: req.user.id, category, type }));
 });
 
-app.post("/records", requireLogin, async (req, res) => {
+app.get("/api/stats", requireLogin, async (req, res) => {
+  res.json(await getStats(req.user.id));
+});
+
+app.post("/api/records", requireLogin, async (req, res) => {
   const r = parseRecord(req.body);
-  await db.query(
+  const { rows } = await db.query(
     `INSERT INTO records (type, amount, category, note, date, user_id)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
     [r.type, r.amount, r.category, r.note, r.date, req.user.id],
   );
-  res.redirect("/");
+  res.status(201).json(rows[0]);
 });
 
-app.post("/records/:id/delete", requireLogin, async (req, res) => {
+app.delete("/api/records/:id", requireLogin, async (req, res) => {
   const id = parseId(req.params.id);
   const { rows } = await db.query(
     `DELETE FROM records WHERE id = $1 AND user_id = $2 RETURNING id`,
@@ -354,50 +338,32 @@ app.post("/records/:id/delete", requireLogin, async (req, res) => {
   if (!rows[0]) {
     throw new HttpError(404, "record not found");
   }
-  res.redirect("/");
+  res.sendStatus(204);
 });
 
-app.post("/records/delete-all", requireLogin, async (req, res) => {
+app.delete("/api/records", requireLogin, async (req, res) => {
   await db.query(`DELETE FROM records WHERE user_id = $1`, [req.user.id]);
-  res.redirect("/");
+  res.sendStatus(204);
+});
+
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "not found" });
 });
 
 function round2(value) {
   return Math.round(value * 100) / 100;
 }
 
-function fmt(value) {
-  return Number(value).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-const TIME_ZONE = process.env.APP_TIME_ZONE || "America/Los_Angeles";
-
-function today() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());
-}
-
 
 app.use((err, req, res, next) => {
   if (err instanceof HttpError) {
-    return res.status(err.status).render("error.ejs", {
-      status: err.status,
-      detail: err.detail,
-    });
+    return res.status(err.status).json({ error: err.detail });
   }
   if (err.expose && err.status < 500) {
-    return res.status(err.status).render("error.ejs", {
-      status: err.status,
-      detail: err.message,
-    });
+    return res.status(err.status).json({ error: err.message });
   }
   console.error(err);
-  res.status(500).render("error.ejs", {
-    status: 500,
-    detail: "internal server error",
-  });
+  res.status(500).json({ error: "internal server error" });
 });
 
 export { app, db, initDb, sessionStore };
