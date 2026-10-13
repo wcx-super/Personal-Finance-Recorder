@@ -251,7 +251,6 @@ app.use(
   }),
 );
 
-const DEFAULT_CATS = ["Dining", "Transportation", "Shopping", "Housing", "Entertainment", "Salary"];
 
 function tooManyRequests(req, res, next) {
   next(new HttpError(429, "too many attempts, please try again later"));

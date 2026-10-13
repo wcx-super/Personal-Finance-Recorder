@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finance Tracker</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Transaction Recorder</h1>
+  <div>
+    <span id="user-email"></span>
+    <button type="button" id="logout" class="danger">Log out</button>
+  </div>
+
+  <div class="summary">
+    <span class="balance num" id="balance"></span>
+    <span class="balance-label">Current Balance</span>
+    <div class="totals num">
+      <span class="income">Income <b id="total-income"></b></span>
+      <span class="expense">Expense <b id="total-expense"></b></span>
+    </div>
+  </div>
+
+  <form id="add-form" class="add-form">
+    <div>
+      <label for="type">Income or Expense</label>
+      <select id="type" name="type">
+        <option value="expense">Expense</option>
+        <option value="income">Income</option>
+      </select>
+    </div>
+    <div>
+      <label for="amount">Amount</label>
+      <input type="number" id="amount" name="amount" step="0.01" min="0.01" max="9999999999.99" required placeholder="0.00">
+    </div>
+    <div>
+      <label for="category">Category</label>
+      <input type="text" id="category" name="category" required maxlength="50" placeholder="Dining" list="cats">
+      <datalist id="cats"></datalist>
+    </div>
+    <div>
+      <label for="date">Date</label>
+      <input type="date" id="date" name="date" required>
+    </div>
+    <div class="full">
+      <label for="note">Note</label>
+      <input type="text" id="note" name="note" maxlength="200" placeholder="Optional">
+    </div>
+    <p id="form-error" class="error-detail full" hidden></p>
+    <div class="full">
+      <button type="submit">Add Transaction</button>
+    </div>
+  </form>
+
+  <h2>All Transactions</h2>
+
+  <div class="filters">
+    <form class="filter-form" method="GET" action="/">
+      <select name="type" id="filter-type">
+        <option value="">All Transactions</option>
+        <option value="expense">Expenses Only</option>
+        <option value="income">Income Only</option>
+      </select>
+      <select name="category" id="filter-category">
+        <option value="">All Categories</option>
+      </select>
+    </form>
+    <div class="clear-form">
+      <button type="button" id="clear-all" class="danger" disabled>Clear all</button>
+    </div>
+  </div>
+
+  <div id="records"></div>
+
+  <h2>Expense Categories</h2>
+  <div id="categories"></div>
+
+</div>
+</body>
+</html>
