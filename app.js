@@ -232,7 +232,7 @@ app.use(helmet());
 app.use(express.json({ limit: "10kb" }));
 
 
-app.use("/static", express.static("static"));
+app.use(express.static("static"));
 const PgSession = connectPgSimple(session);
 const sessionStore = new PgSession({ pool: db, createTableIfMissing: true });
 
