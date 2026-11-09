@@ -1,4 +1,4 @@
-import { app, db, initDb, sessionStore } from "./app.js";
+import { app, db, initDb, sessionStore, passwordHasher} from "./app.js";
 const PORT = Number(process.env.PORT) || 8000;
 
 await initDb();
@@ -10,6 +10,7 @@ function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
   server.close(async () => {
     sessionStore.close();
+    await passwordHasher.close();
     await db.end();
   });
 }

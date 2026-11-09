@@ -2,8 +2,8 @@ import express from "express";
 import pg from "pg";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
-import bcrypt from "bcryptjs";
-import { rateLimit } from "express-rate-limit";
+import { createBcryptPool } from "./bcrypt-pool.js";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import dns from "node:dns";          
 import net from "node:net";          
@@ -22,6 +22,7 @@ const db = new pg.Pool(
         port: Number(process.env.PGPORT) || 5432,
       },
 );
+const passwordHasher = createBcryptPool();
 
 db.on("error", (err) => {
   console.error("Unexpected error on idle database client", err);
@@ -123,8 +124,12 @@ function parseId(raw) {
   return id;
 }
 
+function normalizeEmail(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
 function parseCredentials(body = {}) {
-  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const email = normalizeEmail(body.email);
   const password = typeof body.password === "string" ? body.password : "";
   if (email.length > 254) {
     throw new HttpError(400, "email is too long");
@@ -261,10 +266,18 @@ function tooManyRequests(req, res, next) {
   next(new HttpError(429, "too many attempts, please try again later"));
 }
 
-const loginLimiter = rateLimit({
+const loginIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  skipSuccessfulRequests: true,
+  handler: tooManyRequests,
+});
+
+const loginAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 5,
   skipSuccessfulRequests: true,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}|${normalizeEmail(req.body?.email)}`,
   handler: tooManyRequests,
 });
 
@@ -276,7 +289,7 @@ const registerLimiter = rateLimit({
 
 app.post("/api/register", registerLimiter, async (req, res) => {
   const { email, password } = parseCredentials(req.body);
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await passwordHasher.hash(password, 12);
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash) VALUES ($1, $2)
      ON CONFLICT (email) DO NOTHING
@@ -290,14 +303,14 @@ app.post("/api/register", registerLimiter, async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-app.post("/api/login", loginLimiter, async (req, res) => {
+app.post("/api/login", loginIpLimiter, loginAccountLimiter, async (req, res) => {
   const { email, password } = parseCredentials(req.body);
   const { rows } = await db.query(
     `SELECT id, email, password_hash FROM users WHERE email = $1`,
     [email],
   );
   const user = rows[0];
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+  if (!user || !(await passwordHasher.compare(password, user.password_hash))) {
     throw new HttpError(401, "incorrect email or password");
   }
   await startSession(req, user.id);
@@ -371,4 +384,4 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "internal server error" });
 });
 
-export { app, db, initDb, sessionStore };
+export { app, db, initDb, sessionStore, passwordHasher };
