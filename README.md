@@ -5,7 +5,7 @@ and see where the money went. The back end is a JSON API on Express 5 and Postgr
 the front end is a few static pages in plain JavaScript that call it — no client-side
 framework, no build step.
 
-Live: <https://personal-finance-recorder.onrender.com>
+Live: <https://ledger.ledger-wcx.com>
 
 ## Features
 
@@ -126,14 +126,47 @@ npm test
 ```
 
 The suite wipes its database before running, so it refuses to start unless the
-database name ends in `_test`. Its 8 tests cover what is easiest to get wrong in a
+database name ends in `_test`. Its 9 tests cover what is easiest to get wrong in a
 multi-user app: requests without a session get 401, one user's records, categories
 and totals never appear in another user's responses, nobody can delete or clear
-someone else's records, wrong passwords are rejected, impossible dates are a 400 and
-not a 500, and logging out really ends the session.
+someone else's records, wrong passwords are rejected, repeated failures lock out one
+account without blocking other accounts from the same IP, impossible dates are a 400
+and not a 500, and logging out really ends the session.
 
 GitHub Actions runs the same suite on every push to `main` and on every pull request,
 against a throwaway PostgreSQL service container (`.github/workflows/test.yml`).
+
+## Load testing
+
+The API was load-tested locally with [autocannon](https://github.com/mcollina/autocannon)
+against `docker compose`, on a 16-core machine, with one account holding 1,000
+records. Load came from 50 connections spread over 10 sessions; with a single
+session, every request's update of the session's expiry hits the same row, and the
+resulting lock waits (visible in `pg_stat_activity`) understated throughput about
+fourfold.
+
+The main finding was that bcrypt blocked the event loop. With 4 logins running
+concurrently in the background, before and after moving hashing to worker threads:
+
+| Measured under concurrent logins | Before | After |
+| -------------------------------- | -----: | ----: |
+| `GET /api/records` throughput    | 44 req/s | 742 req/s |
+| `GET /api/records` p99 latency   | 3,965 ms | 87 ms |
+| `GET /api/me` throughput         | 62 req/s | 2,385 req/s |
+| `POST /api/login` throughput     | 5.3 req/s | 22.1 req/s |
+
+Without logins in the background, both versions served `/api/records` at about
+850 req/s and `/api/me` at about 2,500 req/s, so the pool costs nothing when idle.
+
+These numbers describe this machine and this setup, not production: the EC2
+instance has two vCPUs, so its pool has a single worker, and every query there
+crosses regions to the database. What carries over is the shape of the result —
+logins no longer slow down everyone else.
+
+Two other bottlenecks showed up and are not fixed yet. `/api/records` returns the
+whole ledger, and serializing 1,000 rows keeps the main thread busy; with 100 rows
+the same endpoint served 2.7 times as many requests. And every request writes to the
+database just to push its session's expiry forward.
 
 ## Configuration
 
@@ -147,19 +180,34 @@ against a throwaway PostgreSQL service container (`.github/workflows/test.yml`).
 
 ## Deployment
 
-Deployed on Render as a Docker web service, with the database on Neon:
+Runs as a Docker container on an AWS EC2 instance (Ubuntu 24.04), behind Caddy, with
+the database on Neon:
 
-- Render builds the `Dockerfile` and runs `node server.js` as the unprivileged `node`
-  user; `.dockerignore` keeps `.env` files and tests out of the image
-- `DATABASE_URL`, `SESSION_SECRET` and `NODE_ENV=production` are set in the Render
-  dashboard, never in the repository
-- Pushes to `main` are tested by GitHub Actions and deployed by Render
+- The image is built from the `Dockerfile` and runs `node server.js` as the
+  unprivileged `node` user; `.dockerignore` keeps `.env` files and tests out of it
+- The container publishes port 8000 on `127.0.0.1` only. Caddy terminates HTTPS with
+  an automatically renewed Let's Encrypt certificate and reverse-proxies to it, so
+  the security group only opens ports 80 and 443 (SSH is limited to one address)
+- The domain's DNS is on Cloudflare: a DNS-only `A` record points at the instance's
+  Elastic IP, so traffic goes straight to Caddy
+- `DATABASE_URL`, `SESSION_SECRET` and `NODE_ENV=production` live in an env file on
+  the server, readable only by its owner, and never in the repository
+- `--restart unless-stopped` brings the container back after a crash or reboot
+- Pushes to `main` are tested by GitHub Actions; deploying is still a manual
+  `git pull`, `docker build` and container replace on the server
+
+Because Caddy sits in front, the app sets `trust proxy` to one hop: Express then
+reads the client's address and the original `https` scheme from Caddy's
+`X-Forwarded-*` headers, which the `Secure` cookie and the per-IP rate limits both
+depend on.
 
 ## Project structure
 
 ```
 server.js            Startup: create tables, listen, shut down gracefully
 app.js               The Express app: API routes, queries, validation, sessions, errors
+bcrypt-pool.js       Worker-thread pool that runs bcrypt off the event loop
+bcrypt-worker.js     One pool worker: hashes and compares passwords
 static/              Served as-is by express.static
   index.html         The ledger page (markup only)
   login.html         Login form
@@ -169,7 +217,7 @@ static/              Served as-is by express.static
   auth.js            Login and sign-up form handling
   style.css
 test/
-  isolation.test.js  Per-user isolation and validation tests
+  isolation.test.js  Per-user isolation, auth, rate-limit and validation tests
 Dockerfile           Production image
 compose.yaml         Local app + PostgreSQL
 .github/workflows/   CI
@@ -207,8 +255,7 @@ would leak other users' numbers while the record list still looked fine.
 ### Sessions and passwords
 
 Passwords are hashed with bcrypt (cost 12) and never stored or logged in plain text.
-Unknown emails and wrong passwords get the same message, so the login endpoint cannot
-be used to discover who has an account. Passwords over 72 bytes are rejected because
+Unknown emails and wrong passwords get the same message. Passwords over 72 bytes are rejected because
 bcrypt silently ignores everything past that point.
 
 Sessions live in PostgreSQL through `connect-pg-simple` rather than in memory, so a
@@ -223,6 +270,25 @@ that door. The cookie is `SameSite=Lax`, so the browser leaves it off cross-site
 which another site's HTML form cannot send; a script on another origin could, but
 only after a CORS preflight that this API never approves.
 
+### Password hashing off the event loop
+
+bcrypt is slow on purpose: at cost 12 one hash takes about 180 ms of CPU. `bcryptjs`
+is pure JavaScript, so on the main thread every login stalled every other request
+for that long — load testing showed that four concurrent logins cut the throughput
+of unrelated endpoints by over 90%, which also made the login endpoint a cheap way
+to slow the whole site down.
+
+Hashing now runs in a small pool of worker threads (`bcrypt-pool.js`), one per CPU
+core minus one for the main thread, and never fewer than one. Each worker handles one
+task at a time; when all are busy, tasks queue. A worker that crashes fails its
+current task and is replaced. The main thread only parses the request, runs the
+queries and sends the response, so other users are no longer affected by logins.
+
+This keeps the pure-JavaScript library, with no native module to compile in the
+Docker image. The cost of a hash is unchanged, so passwords are no harder or easier
+to crack offline — a single login is not faster, but logins no longer queue behind
+each other or block anyone else.
+
 ### Defense in depth in the browser
 
 `helmet` sets a Content Security Policy that only runs scripts from the site's own
@@ -230,8 +296,18 @@ files and refuses inline event handlers, so even markup that slipped past
 `textContent` could not execute. That is why every page loads its behavior from a
 `.js` file and attaches listeners with `addEventListener`.
 
-Login and sign-up are rate limited per IP. Only failed logins count, so signing in
-and out repeatedly never locks you out. Counters are in memory and reset on restart.
+Login goes through two rate limiters, and only failed attempts count toward either,
+so signing in and out repeatedly never locks you out:
+
+- 5 failures per IP per account in 15 minutes stops anyone guessing one password.
+  The key includes the IP so a stranger cannot lock you out of your own account
+  from elsewhere, and the email is trimmed and lowercased first so `Alice@x.com`
+  and `alice@x.com` share a counter
+- 100 failures per IP in 15 minutes, across all accounts, stops one address from
+  trying a few passwords on many accounts, while leaving room for a school or office
+  where many people share one public IP
+
+Sign-up is limited to 5 per IP per hour. Counters are in memory and reset on restart.
 
 ### One validation boundary
 
@@ -323,9 +399,10 @@ a personal ledger it is not worth it.
 
 ### Graceful shutdown
 
-On `SIGTERM` (sent by Render and Docker on every redeploy) and `SIGINT`, the server
-stops accepting connections, lets in-flight requests finish, then closes the session
-store and the pool. The container runs `node server.js` directly rather than through
+On `SIGTERM` (sent by Docker on every redeploy) and `SIGINT`, the server stops
+accepting connections, lets in-flight requests finish, then closes the session store,
+the bcrypt worker pool and the database pool. Worker threads would otherwise keep the
+process alive, which is also why the tests close the worker pool when they finish. The container runs `node server.js` directly rather than through
 `npm start`, so the signal reaches Node instead of stopping at npm.
 
 ## Known limitations
@@ -334,10 +411,16 @@ store and the pool. The container runs `node server.js` directly rather than thr
 - Authentication is cookie-based, which suits this same-origin front end; a mobile
   app or third-party client would want token-based auth instead
 - No endpoint to edit a record; fixing a mistake means deleting and re-adding it
-- Rate limiting is per IP and in memory: many IPs guessing one account are not
-  slowed down, and a restart resets the counters
+- Rate limiting is keyed on the IP and kept in memory: many IPs guessing one account
+  are not slowed down, a restart resets the counters, and several app instances
+  would each keep their own count
 - Categories are derived from existing rows, so deleting the last entry in a
   category removes it from the dropdowns
 - Category matching is case-sensitive: `Dining` and `dining` are two categories
 - No password reset or email verification
+- Whether an email has an account can still be inferred: an unknown email skips the
+  bcrypt comparison and answers noticeably faster, and sign-up reports a taken email
 - No pagination; `/api/records` returns every row
+- Every authenticated request rewrites its session row to extend the expiry
+- On a two-vCPU server the bcrypt pool has one worker, so concurrent logins still
+  queue behind each other, though no longer behind other requests

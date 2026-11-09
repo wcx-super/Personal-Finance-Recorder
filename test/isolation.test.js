@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
-import { app, db, initDb, sessionStore } from "../app.js";
+import { app, db, initDb, sessionStore, passwordHasher } from "../app.js";
 
 let alice;
 let bob;
@@ -25,6 +25,7 @@ before(async () => {
 
 after(async () => {
   sessionStore.close();
+  await passwordHasher.close();
   await db.end();
 });
 
@@ -75,6 +76,22 @@ test("a wrong password is rejected", async () => {
     .send({ email: "alice@example.com", password: "not-her-password" })
     .expect(401);
   assert.equal(res.body.error, "incorrect email or password");
+});
+
+test("failed logins lock out one account without blocking others on the same IP", async () => {
+  const guess = { email: "Target@Example.com", password: "wrong-password" };
+  for (let i = 0; i < 5; i++) {
+    await request(app).post("/api/login").send(guess).expect(401);
+  }
+  await request(app)
+    .post("/api/login")
+    .send({ ...guess, email: " target@example.com " })
+    .expect(429);
+
+  await request(app)
+    .post("/api/login")
+    .send({ email: "bob@example.com", password: "bob-password" })
+    .expect(200);
 });
 
 test("an impossible date is rejected with 400, not 500", async () => {
